@@ -1,6 +1,6 @@
-# Secondary Structure Prediction
+# Masked Proteome Project
 
-Creating a tranformer based masking model for the Listeria innocua proteome.
+Creating a transformer based masking model for the Listeria innocua proteome.
 
 ## Authors
 
