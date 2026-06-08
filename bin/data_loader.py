@@ -19,6 +19,16 @@ def load_and_encode(data_path = "./data/uniprotkb_taxonomy_id_1002366_2026_06_05
     aa_decode = lambda x: "".join([aa_itos[i] for i in x.argmax(dim=-1).tolist()])
 
     encoded_sequences = [aa_encode(seq) for seq in sequences]
-    
-    return encoded_sequences, AminoAcids,, aa_stoi, aa_itos, aa_encode, aa_decode
 
+    # MASKING!!!!
+
+    masked_sequences = []
+    label_sequences = []
+
+    for seq in sequences:
+        masked_seq, labels = mask_sequence_string(seq, mask_prob=0.15)
+
+        masked_sequences.append(masked_seq)
+        label_sequences.append(labels)
+    
+    return encoded_sequences, AminoAcids, aa_stoi, aa_itos, aa_encode, aa_decode
