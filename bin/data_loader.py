@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 import torch
 import torch.nn.functional as F
+from pathlib import Path
 
 def make_masked(seq, mask_prob=0.15):
     masked = []
@@ -16,7 +17,7 @@ def make_masked(seq, mask_prob=0.15):
 
     for aa in seq:
         if torch.rand(1).item() < mask_prob:
-            labels.append(aa_stoi[aa])
+            labels.append(output_stoi[aa])
 
             r = torch.rand(1).item()
 
@@ -29,7 +30,7 @@ def make_masked(seq, mask_prob=0.15):
         else:
             masked.append(aa)
             labels.append(-100)
-
+            
     return "".join(masked), torch.tensor(labels, dtype=torch.long)
 
 def make_collate_fn(mask_rate):
@@ -39,9 +40,9 @@ def make_collate_fn(mask_rate):
         masked_data = [make_masked(seq, mask_rate) for seq in original]
 
         masked = [item[0] for item in masked_data]
-        y = [item[1] for item in masked_data]
+        y = [torch.cat([torch.tensor([-100], dtype=torch.long), item[1]]) for item in masked_data]
 
-        x_ids = [torch.tensor([aa_stoi[aa] for aa in seq], dtype=torch.long) for seq in masked]
+        x_ids = [torch.tensor([cls_idx] + [aa_stoi[aa] for aa in seq], dtype=torch.long) for seq in masked]
 
         lengths = torch.tensor([len(seq) for seq in x_ids], dtype=torch.long)
 
@@ -55,10 +56,16 @@ def make_collate_fn(mask_rate):
 
     return collate_fn
 
-def loader(data_path = "./data/uniprotkb_taxonomy_id_1002366_2026_06_05.fasta"):
-    data_path = "./data/uniprotkb_taxonomy_id_1002366_2026_06_05.fasta"
-    sequences = [str(record.seq) for record in SeqIO.parse(data_path, "fasta")]
+def loader(data_dir = Path("./data")):
+    fasta_files = list(data_dir.glob("*.fasta")) + list(data_dir.glob("*.fa"))
+    sequences = []
+
+    for fasta_file in fasta_files:
+        for record in SeqIO.parse(fasta_file, "fasta"):
+            sequences.append(str(record.seq))
+
     sequences = [seq for seq in sequences if len(seq) < ModelArgs.length_cutoff]
+    sequences = sorted(set(sequences), key=len)
 
     AminoAcids = sorted(list(set("".join(sequences))))  # X is a padding, - is masking
     aa_vocab= ["-"] + ["X"]+ AminoAcids 
@@ -66,8 +73,14 @@ def loader(data_path = "./data/uniprotkb_taxonomy_id_1002366_2026_06_05.fasta"):
     aa_stoi = {s: i for i, s in enumerate(aa_vocab)}
     aa_itos = {i: s for i, s in enumerate(aa_vocab)}
 
-    traindata, valdata, testdata = torch.utils.data.random_split(sequences, [0.80, 0.10, 0.10])
+    output_stoi = {s: i for i, s in enumerate(AminoAcids)}
+    output_itos = {i: s for i, s in enumerate(AminoAcids)}
 
+    pad_idx = aa_stoi["X"]
+    mask_idx = aa_stoi["-"]
+    cls_idx = aa_stoi["[CLS]"]
+
+    traindata, valdata, testdata = torch.utils.data.random_split(sequences, [0.80, 0.10, 0.10])
 
     train_loader = DataLoader(traindata, batch_size=ModelArgs.batch_size, shuffle=True, collate_fn=make_collate_fn(ModelArgs.masking_rate))
     val_loader = DataLoader(valdata, batch_size=ModelArgs.batch_size, shuffle=False, collate_fn=make_collate_fn(ModelArgs.masking_rate))

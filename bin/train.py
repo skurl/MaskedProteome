@@ -6,19 +6,19 @@ from dataclasses import dataclass
 @dataclass
 class ModelArgs:
     length_cutoff: int = 100
-    masking_rate: float = 0.15
+    masking_rate: float = 0.1
     batch_size=32
-    src_vocab_size = 22
-    tgt_vocab_size = 22
+    src_vocab_size = 23
+    tgt_vocab_size = 23
     d_model = 128
-    num_heads = 4
-    num_layers = 4
+    num_heads = 8
+    num_layers = 8
     d_ff = 4*d_model
     max_seq_length = 1000
-    dropout = 0.1
-    num_epochs=100
+    dropout = 0.15
+    num_epochs=150
     learning_rate = 1e-3
-    weight_decay = 1e-3
+    weight_decay = 1e-2
 
 def run_epoch(model, loader, criterion, optimizer, device, tgt_vocab_size, training=True):
     if training:
@@ -60,14 +60,13 @@ def train_model(
     learning_rate=1e-4,
     save_path="./outputs/weights.pth"
 ):
-    criterion = nn.CrossEntropyLoss(ignore_index=-100)
-    optimizer = optim.AdamW(
-        model.parameters(),
-        lr=learning_rate,
-        weight_decay=ModelArgs.weight_decay
-    )
+    criterion = nn.CrossEntropyLoss(ignore_index=-100, label_smoothing=0.05)
+    optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=ModelArgs.weight_decay)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
 
     model = model.to(device)
+
+    best_val_loss = float("inf")
 
     for epoch in range(num_epochs):
         train_loss = run_epoch(
@@ -91,13 +90,23 @@ def train_model(
                 training=False
             )
 
+        scheduler.step()
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), save_path)
+            print("New Best!")
+            
+        current_lr = scheduler.get_last_lr()[0]
+
         print(
             f"Epoch: {epoch + 1}, "
             f"Train Loss: {train_loss:.4f}, "
             f"Val Loss: {val_loss:.4f}, "
-            f"Difference: {val_loss-train_loss}"
+            f"Difference: {val_loss-train_loss}, "
+            f"LR: {current_lr:.6f}"
         )
 
-    torch.save(model.state_dict(), save_path)
+    model.load_state_dict(torch.load(save_path, map_location=device))
 
     return model

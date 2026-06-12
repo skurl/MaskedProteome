@@ -18,12 +18,15 @@ class MultiHeadAttention(nn.Module):
         self.W_v = nn.Linear(d_model, d_model)
         self.W_o = nn.Linear(d_model, d_model)
         
-    def scaled_dot_product_attention(self, Q, K, V, mask=None):
+    def scaled_dot_product_attention(self, Q, K, V, mask=None, return_attention = False):
         attn_scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
         if mask is not None:
             attn_scores = attn_scores.masked_fill(mask == 0, -1e9)
         attn_probs = torch.softmax(attn_scores, dim=-1)
         output = torch.matmul(attn_probs, V)
+        if return_attention:
+            return output, attn_probs
+            
         return output
         
     def split_heads(self, x):
@@ -34,13 +37,21 @@ class MultiHeadAttention(nn.Module):
         batch_size, _, seq_length, d_k = x.size()
         return x.transpose(1, 2).contiguous().view(batch_size, seq_length, self.d_model)
         
-    def forward(self, Q, K, V, mask=None):
+    def forward(self, Q, K, V, mask=None, return_attention = False):
         Q = self.split_heads(self.W_q(Q))
         K = self.split_heads(self.W_k(K))
         V = self.split_heads(self.W_v(V))
         
-        attn_output = self.scaled_dot_product_attention(Q, K, V, mask)
+        if return_attention:
+            attn_output, attn_probs = self.scaled_dot_product_attention(Q, K, V, mask, return_attention=True)
+        else:
+            attn_output = self.scaled_dot_product_attention(Q, K, V, mask, return_attention=False)
+
         output = self.W_o(self.combine_heads(attn_output))
+
+        if return_attention:
+            return output, attn_probs
+        
         return output
     
 class PositionWiseFeedForward(nn.Module):
@@ -97,14 +108,21 @@ class EncoderLayer(nn.Module):
         self.feed_forward = PositionWiseFeedForward(d_model, d_ff)
         self.dropout = nn.Dropout(dropout)
         
-    def forward(self, x, mask):
-        
-        attn_output = self.self_attn(x, x, x, mask)
+    def forward(self, x, mask, return_attention=False):
+        if return_attention:
+            attn_output, attn_probs = self.self_attn(x, x, x, mask, return_attention=True)
+        else:
+            attn_output = self.self_attn(x, x, x, mask, return_attention=False)
+
         x = self.norm1(x + self.dropout(attn_output))
         conv_output = self.local_convolution(x)
         x = self.norm2(x + self.dropout(conv_output))
         ff_output = self.feed_forward(x)
         x = self.norm3(x + self.dropout(ff_output))
+        
+        if return_attention:
+            return x, attn_probs
+        
         return x
 
 
@@ -114,12 +132,12 @@ class Transformer(nn.Module):
         self.encoder_embedding = nn.Embedding(src_vocab_size, d_model, padding_idx=0)
         self.positional_encoding = PositionalEncoding(d_model, max_seq_length)
         self.encoder_layers = nn.ModuleList([EncoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
-        self.fc = nn.Linear(d_model, tgt_vocab_size)
+        self.fc = nn.Linear(d_model, 20)
         self.final_norm = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
 
 
-    def forward(self, src, attention_mask=None):
+    def forward(self, src, attention_mask=None, return_attention=False):
         x = self.encoder_embedding(src)
         x = self.positional_encoding(x)
         x = self.dropout(x)
@@ -130,13 +148,22 @@ class Transformer(nn.Module):
         else:
             mask = None
 
-        for enc_layer in self.encoder_layers:
-            x = enc_layer(x, mask=mask)
+        E_attention = []
 
+        for enc_layer in self.encoder_layers:
+            if return_attention:
+                x, attn_probs = enc_layer(x, mask=mask, return_attention=True)
+                E_attention.append(attn_probs)
+            else:
+                x = enc_layer(x, mask=mask, return_attention=False)
+            
             if attention_mask is not None:
                 x = x * attention_mask.unsqueeze(-1)
 
         x = self.final_norm(x)
         output = self.fc(x)
+
+        if return_attention:
+            return output, E_attention
 
         return output
