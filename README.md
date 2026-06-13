@@ -1,11 +1,11 @@
 # Masked Proteome Project
 
-Creating a transformer based masking model for the Listeria innocua proteome.
+Creating a transformer based masking model for Listeria spp. proteomes.
 
 ## Authors
 
 - Maciej Szczesny
 
 ## Notes
-[2026-06-05]:
-- Added one-hot amino acid encoding.
+
+All extra details can be found in the Jupyter notebook, as well as logs from different runs in the logs.md file.
