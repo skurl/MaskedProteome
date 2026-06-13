@@ -54,9 +54,9 @@ Predicted Amino Acid in the top 5 test: 70.62%
 ADDED label smoothing
 
 Test Loss: 2.0123
-Predicted Amino Acid in the top 5 test: 71.12%
 Predicted Amino Acid in the top 1 test: 42.65%
 Predicted Amino Acid in the top 3 test: 61.19%
+Predicted Amino Acid in the top 5 test: 71.12%
 
 increased #epochs to 150
 
@@ -73,3 +73,12 @@ Predicted Amino Acid in the top 3 test: 60.69%
 Predicted Amino Acid in the top 5 test: 70.69%
 
 So basically now its quite consistent
+
+FOR THE 3-masked model:
+
+Test Loss: 2.4321
+Predicted Amino Acid in the top 1 test: 30.22%
+Predicted Amino Acid in the top 3 test: 51.09%
+Predicted Amino Acid in the top 5 test: 64.11%
+
+(parameters are not optimised)
