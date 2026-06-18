@@ -22,7 +22,7 @@ print(f"Using: {device}\n")
 class ModelArgs:
     data_dir = "./data"
     out_dir = "./outputs"
-    length_cutoff = 500
+    length_cutoff = 512
     mmseqs_tsv = "./outputs/clust_cluster.tsv"   # used if present, else k-mer greedy
     kmer_k = 4
     cluster_threshold = 0.5
@@ -31,22 +31,23 @@ class ModelArgs:
     mask_rate = 0.15
     d_model = 256
     num_heads = 8
-    num_layers = 8
+    num_layers = 12
     d_ff = 4 * 256
-    dropout = 0.1   # MMseqs split (less redundant) overfits at 0.0 — regularise
-    batch_size = 64
-    num_epochs = 300
+    dropout = 0   # Dropout = 0 in the ESM paper, but with a smaller dataset it may overfit
+    batch_size = 64 # changed from 64
+    num_epochs = 100
     learning_rate = 1e-3
     weight_decay = 1e-2
     label_smoothing = 0.05
     grad_clip = 1.0
-    grad_accum = 2
+    grad_accum = 4 # this one might be interesting to tweak as well
     warmup_steps = 1000
     min_lr_ratio = 0.1
     use_ema = True
     ema_decay = 0.999
+    amp = True          # bf16 mixed precision on CUDA (Ampere+); no GradScaler needed
     log_every = 100
-    seeds = (42, 123, 7)
+    seeds = (42, )
     eval_mask_seed = 999
 
 
@@ -363,8 +364,10 @@ def evaluate(model, loader):
     t5 = torch.zeros((), device=device)
     for x, y, attn in loader:
         x, y, attn = x.to(device), y.to(device), attn.to(device).bool()
-        logits = model(x, attn)
-        fl, fy = logits.reshape(-1, num_classes), y.reshape(-1)
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16,
+                            enabled=(ModelArgs.amp and device == "cuda")):
+            logits = model(x, attn)
+        fl, fy = logits.float().reshape(-1, num_classes), y.reshape(-1)   # fp32 for stable ppl
         total_nll += nll_fn(fl, fy)
         m = fy != -100
         total_tok += m.sum()
@@ -396,8 +399,10 @@ def train(model, train_loader, seed):
         opt.zero_grad()
         for step, (x, y, attn) in enumerate(train_loader):
             x, y, attn = x.to(device), y.to(device), attn.to(device).bool()
-            loss = crit(model(x, attn).reshape(-1, num_classes), y.reshape(-1)) / ModelArgs.grad_accum
-            loss.backward()
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16,
+                                enabled=(ModelArgs.amp and device == "cuda")):
+                loss = crit(model(x, attn).reshape(-1, num_classes), y.reshape(-1)) / ModelArgs.grad_accum
+            loss.backward()                          # bf16: no GradScaler needed
             tok_acc += (y != -100).sum()
             if (step + 1) % ModelArgs.grad_accum == 0 or (step + 1) == len(train_loader):
                 clip_grad_norm_(model.parameters(), ModelArgs.grad_clip)
