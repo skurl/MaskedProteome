@@ -1,8 +1,15 @@
+"""
+
+This is the original way I ran my expieriments on a cluster. I would copy and paste it from here & run using the singularity container.
+
+"""
+
+
 import pandas as pd
 import numpy as np
 import torch.nn.functional as F
 from torch import nn
-from Bio import SeqIO 
+from Bio import SeqIO
 import torch
 import random
 from dataclasses import dataclass
@@ -35,7 +42,6 @@ class ModelArgs:
     num_epochs=150
     learning_rate = 1e-3
     weight_decay = 1e-2
-
 
 data_path = "./data/uniprotkb_taxonomy_id_1002366_2026_06_05.fasta"
 
