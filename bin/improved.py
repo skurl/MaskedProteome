@@ -33,7 +33,7 @@ class Config:
     out_dir: str = "./outputs"
     
     # data
-    length_cutoff: int = 500
+    length_cutoff: int = 500   # must match super_runner.py + the cutoff the MMseqs TSV was built at
     max_sequences: Optional[int] = None
 
     # clustering / split
@@ -49,7 +49,7 @@ class Config:
     # model
     d_model: int = 256
     num_heads: int = 8
-    num_layers: int = 8
+    num_layers: int = 12   # must match the architecture the weights were trained with (super_runner.py)
     d_ff: int = d_model*4
     dropout: float = 0.1   # MMseqs split (less redundant) overfits at 0.0 — regularise
 

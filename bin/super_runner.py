@@ -22,7 +22,7 @@ print(f"Using: {device}\n")
 class ModelArgs:
     data_dir = "./data"
     out_dir = "./outputs"
-    length_cutoff = 512
+    length_cutoff = 500   # must match the cutoff the MMseqs clust_cluster.tsv was built at
     mmseqs_tsv = "./outputs/clust_cluster.tsv"   # used if present, else k-mer greedy
     kmer_k = 4
     cluster_threshold = 0.5
