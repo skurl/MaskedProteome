@@ -20,15 +20,20 @@ The script that was used to train the model is available in `bin/super_runner.py
 
 # Results:
 
-	Top-1	Top-3	Top-5	Perplexity
-Unigram baseline	9.8%	25.5%	40.0%	17.6
-Local convolution model	21.8 ± 0.04%	40.0%	53.6%	13.1 ± 0.02
+|                         | Top-1        | Top-3 | Top-5 | Perplexity  |
+| ----------------------- | ------------ | ----- | ----- | ----------- |
+| Unigram baseline        | 9.8%         | 25.5% | 40.0% | 17.6        |
+| Local convolution model | 21.8 ± 0.04% | 40.0% | 53.6% | 13.1 ± 0.02 |
 
 The model with local convolution doubles baseline top-1 and reduces perplexity by 25%. Validation loss (2.57) sits well above the ~2.0 threshold below which results indicate sequence leakage. This matches the efficiency of ESM2-8M (ppl ~13.1, top-1 ~21% on UniRef50), amodel of comparable size, without training on a massive data set.
 
-    Params	Top-1	Perplexity	BLOSUM ρ
-No convolution	9.48M	21.82 ± 0.04%	13.124 ± 0.02	0.29
-With Local convolution	10.30M	21.83 ± 0.04%	13.129 ± 0.01	0.32
+
+
+|                | Params | Top-1 | Perplexity | BLOSUM62 ρ-value|
+| -------------- | ------ | ----- | ---------- | ---------- |
+| No convolution | 9.48M | 21.82 ± 0.04% | 13.124 ± 0.02 | 0.29 |
+| With Local convolution | 10.30M | 21.83 ± 0.04% | 13.129 ± 0.01 | 0.32 |
+
 
 Adding the convolution layer produced no measurable change while costing ~0.8M parameters and ~20% throughput. Self-attention already captures local context and can additionally model the long-range residue contacts that protein folding creates, where residues far apart in the primary structure may contact when the protein is folded.
 
