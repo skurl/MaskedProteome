@@ -1,32 +1,131 @@
-"""
-Loads saved weights (default outputs/model_best.pth), rebuilds the *same*
-test set as training (deterministic: fixed split_seed / eval_mask_seed in
-Config), and writes figures + numbers for:
-  - BLOSUM62 correlation (does the model's confusion match evolution?)
-  - per-amino-acid accuracy
-  - model confusion matrix vs BLOSUM62 heatmaps
-
-Run:
-    singularity exec --nv --bind $PWD:/app --pwd /app ./masked-proteome.sif \
-        python -u /app/bin/analyze.py [path/to/weights.pth] 2>&1 | tee analyze.log
-"""
-
 import sys
 from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import matplotlib
+matplotlib.use("Agg")          # headless: write PNGs, no display on the cluster
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
-matplotlib.use("Agg")          # headless: write PNGs, no display on the cluster
+import improved as M           # data + analysis utilities (NOT the model)
 
-import improved as M
+class RotaryEmbedding(nn.Module):
+    def __init__(self, head_dim, max_len=2048, base=10000):
+        super().__init__()
+        inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2).float() / head_dim))
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self._build(max_len)
 
+    def _build(self, n):
+        freqs = torch.outer(torch.arange(n, device=self.inv_freq.device).float(), self.inv_freq)
+        self.register_buffer("cos", freqs.cos(), persistent=False)
+        self.register_buffer("sin", freqs.sin(), persistent=False)
+
+    def forward(self, n):
+        if n > self.cos.size(0):
+            self._build(n)
+        return self.cos[:n], self.sin[:n]
+
+
+def rotate_half(x):
+    x1, x2 = x[..., :x.shape[-1] // 2], x[..., x.shape[-1] // 2:]
+    return torch.cat([-x2, x1], dim=-1)
+
+
+def apply_rope(q, k, cos, sin):
+    cos = torch.cat([cos, cos], -1).unsqueeze(0).unsqueeze(0)
+    sin = torch.cat([sin, sin], -1).unsqueeze(0).unsqueeze(0)
+    return q * cos + rotate_half(q) * sin, k * cos + rotate_half(k) * sin
+
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, d_model, num_heads, dropout):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = d_model // num_heads
+        self.dropout = dropout
+        self.W_q = nn.Linear(d_model, d_model, bias=False)
+        self.W_k = nn.Linear(d_model, d_model, bias=False)
+        self.W_v = nn.Linear(d_model, d_model, bias=False)
+        self.W_o = nn.Linear(d_model, d_model, bias=False)
+        self.rope = RotaryEmbedding(self.head_dim)
+
+    def forward(self, x, padding_mask=None):
+        B, L, D = x.shape
+        split = lambda t: t.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
+        q, k, v = split(self.W_q(x)), split(self.W_k(x)), split(self.W_v(x))
+        cos, sin = self.rope(L)
+        q, k = apply_rope(q, k, cos, sin)
+        attn_mask = padding_mask[:, None, None, :] if padding_mask is not None else None
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask,
+                                             dropout_p=self.dropout if self.training else 0.0)
+        return self.W_o(out.transpose(1, 2).contiguous().view(B, L, D))
+
+
+class LocalConv(nn.Module):
+    def __init__(self, d_model, kernel_size=7, dropout=0.0):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv1d(d_model, d_model, kernel_size, padding=kernel_size // 2, groups=d_model),
+            nn.GELU(),
+            nn.Conv1d(d_model, d_model, 1),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x):
+        return self.conv(x.transpose(1, 2)).transpose(1, 2)
+
+
+class EncoderLayer(nn.Module):
+    def __init__(self, d_model, num_heads, d_ff, dropout, conv_kernel=7):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(d_model)
+        self.attn = MultiHeadAttention(d_model, num_heads, dropout)
+        self.norm_conv = nn.LayerNorm(d_model)
+        self.conv = LocalConv(d_model, conv_kernel, dropout)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.ff = nn.Sequential(nn.Linear(d_model, d_ff), nn.GELU(),
+                                nn.Linear(d_ff, d_model), nn.Dropout(dropout))
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, padding_mask=None):
+        x = x + self.dropout(self.attn(self.norm1(x), padding_mask))
+        h = self.norm_conv(x)
+        if padding_mask is not None:
+            h = h * padding_mask.unsqueeze(-1).to(h.dtype)
+        x = x + self.dropout(self.conv(h))
+        x = x + self.dropout(self.ff(self.norm2(x)))
+        return x
+
+
+class Transformer(nn.Module):
+    def __init__(self, cfg, input_vocab_size, num_classes):
+        super().__init__()
+        ck = getattr(cfg, "conv_kernel", 7)
+        self.embed = nn.Embedding(input_vocab_size, cfg.d_model, padding_idx=M.PAD_IDX)
+        self.layers = nn.ModuleList([
+            EncoderLayer(cfg.d_model, cfg.num_heads, cfg.d_ff, cfg.dropout, ck)
+            for _ in range(cfg.num_layers)
+        ])
+        self.final_norm = nn.LayerNorm(cfg.d_model)
+        self.fc = nn.Linear(cfg.d_model, num_classes, bias=False)
+        self.dropout = nn.Dropout(cfg.dropout)
+
+    def forward(self, src, attention_mask=None):
+        x = self.dropout(self.embed(src))
+        for layer in self.layers:
+            x = layer(x, attention_mask)
+        return self.fc(self.final_norm(x))
+
+
+# --------------------------------------------------------------------------- #
+# Test set + figures
+# --------------------------------------------------------------------------- #
 
 def build_test_loader(cfg, stoi, out_stoi, classes):
-    """Rebuild the exact test split + masks training used (all seeds fixed)."""
     seqs = M.load_sequences(cfg)
     if cfg.mmseqs_tsv and Path(cfg.mmseqs_tsv).exists():
         assignment = M.clusters_from_mmseqs(seqs, cfg.mmseqs_tsv)
@@ -39,7 +138,6 @@ def build_test_loader(cfg, stoi, out_stoi, classes):
 
 
 def class_order(aas):
-    """Order AAs by biochemical class so block structure is visible in heatmaps."""
     groups = ["hydrophobic", "aromatic", "polar", "basic", "acidic", "special"]
     return sorted(range(len(aas)), key=lambda i: groups.index(M.AA_CLASS.get(aas[i], "special")))
 
@@ -62,7 +160,7 @@ def plot_heatmaps(model_mat, B, aas, out):
     labels = [aas[i] for i in order]
     Mh = model_mat[np.ix_(order, order)].copy()
     Bh = B[np.ix_(order, order)].copy()
-    np.fill_diagonal(Mh, np.nan)
+    np.fill_diagonal(Mh, np.nan)        # mask self-prediction so the colour scale shows substitutions
     np.fill_diagonal(Bh, np.nan)
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 6))
@@ -110,10 +208,11 @@ def main():
 
     test_loader = build_test_loader(cfg, stoi, out_stoi, classes)
 
-    model = M.Transformer(cfg, input_vocab_size=len(stoi), num_classes=num_classes).to(device)
+    model = Transformer(cfg, input_vocab_size=len(stoi), num_classes=num_classes).to(device)
     model.load_state_dict(torch.load(weights, map_location=device))
     model.eval()
 
+    # Sanity: confirm loaded weights reproduce sensible metrics.
     metrics = M.evaluate(model, test_loader, device, num_classes)
     print(f"[test] top1 {metrics['top1']:.2f}%  top3 {metrics['top3']:.2f}%  "
           f"top5 {metrics['top5']:.2f}%  ppl {metrics['perplexity']:.3f}")
@@ -126,6 +225,7 @@ def main():
           f"wrong-but-same-class {bio['wrong_but_same_class_rate']:.2f}%")
     print(f"[blosum]  off-diagonal Spearman vs BLOSUM62: {rho:.3f}")
 
+    # Figures
     from Bio.Align import substitution_matrices
     aas = blosum["aas"]
     model_mat = np.array(blosum["model_matrix"])
