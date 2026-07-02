@@ -4,7 +4,7 @@ The goal of this project is creating a transformer based masked model, trained o
 
 # TLDR Results
 
-A ~9.5M-parameter masked protein language model trained on a single bacterial genus (Listeria) learns amino-acid context to a perplexity of 13.1 on a strict homolog-separated test set, matching the  performance of the comparably-sized general model [ESM2-8M](https://github.com/BioTender-max/ESM2-small), on its own domain. The model recovers part of the substitution structure of protein evolution without supervision (BLOSUM62 ρ ≈ 0.3). A local-convolution block was ablated and gave no benefit, and the perplexity ceiling is shown to be set by data volume, not architecture: a model of the same size trained on a much larger, UniRef50 dataset instead, the identical model improves to ppl 12.6 with no overfitting.
+A ~9.5M-parameter masked protein language model trained on a single bacterial genus (Listeria) learns amino-acid context to a perplexity of 13.1 on a strict homolog-separated test set. The model recovers part of the substitution structure of protein evolution without supervision (BLOSUM62 ρ ≈ 0.3). A local-convolution block was ablated and gave no benefit, and the perplexity ceiling is shown to be set by data volume, not architecture: a model of the same size trained on a much larger, UniRef50 dataset instead, the identical model improves to ppl 12.6 with no overfitting.
 
 # Authors
 
@@ -25,9 +25,7 @@ The script that was used to train the model is available in `bin/super_runner.py
 | Unigram baseline        | 9.8%         | 25.5% | 40.0% | 17.6        |
 | Local convolution model | 21.8 ± 0.04% | 40.0% | 53.6% | 13.1 ± 0.02 |
 
-The model with local convolution doubles baseline top-1 and reduces perplexity by 25%. Validation loss (2.57) sits well above the ~2.0 threshold below which results indicate sequence leakage. This matches the efficiency of ESM2-8M (ppl ~13.1, top-1 ~21% on UniRef50), amodel of comparable size, without training on a massive data set.
-
-
+The model with local convolution doubles baseline top-1 and reduces perplexity by 25%. Validation loss (2.57) sits well above the ~2.0 threshold below which results indicate sequence leakage. This model is weaker than the [ESM2-8M](https://www.biorxiv.org/content/10.1101/2022.07.20.500902v1.full) (ppl ~10.5), a model of comparable size. Almost certainly that is due to the far larger training dataset.
 
 |                | Params | Top-1 | Perplexity | BLOSUM62 ρ-value|
 | -------------- | ------ | ----- | ---------- | ---------- |
